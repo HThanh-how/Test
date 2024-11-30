@@ -26,7 +26,9 @@ def read_processed_files(log_file):
                     old_name = parts[0]
                     new_name = parts[1]
                     time_processed = parts[2] if len(parts) > 2 else ""
+                    # Lưu cả tên cũ và tên mới để kiểm tra
                     processed_files[old_name] = {"new_name": new_name, "time": time_processed}
+                    processed_files[new_name] = {"new_name": new_name, "time": time_processed}
     return processed_files
 
 def sanitize_filename(name):
@@ -411,7 +413,8 @@ def main():
     input_folder = "."  # Folder hiện tại
     vn_folder = "Lồng Tiếng - Thuyết Minh"    # Folder cho file tiếng Việt
     original_folder = "Original"  # Folder cho file gốc
-    log_file = "processed_files.log"
+    # lấy log file từ C:\Subtitles
+    log_file = os.path.join(r"C:\Subtitles", "processed_files.log")
 
     # Tạo các folder output nếu chưa tồn tại
     create_folder(vn_folder)
@@ -439,7 +442,7 @@ def main():
             else:
                 print(f"No subtitles found in {mkv_file}")
 
-            # Kiểm tra file đã xử lý
+            # Kiểm tra file đã xử lý (kiểm tra cả tên cũ và tên mới)
             if mkv_file in processed_files:
                 print(f"File {mkv_file} was processed as {processed_files[mkv_file]['new_name']} on {processed_files[mkv_file]['time']}. Skipping audio processing.")
                 continue
