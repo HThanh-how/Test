@@ -310,7 +310,7 @@ def process_video(file_path, output_folder, selected_track, log_file):
                 output_path
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+            result = subprocess.run(cmd, capture_output=True)
 
             if result.returncode == 0 and os.path.exists(output_path):
                 print(f"Video saved to {output_path}.")
@@ -326,7 +326,9 @@ def process_video(file_path, output_folder, selected_track, log_file):
             else:
                 print(f"Failed to process {file_path}.")
                 if result.stderr:
-                    print(f"Error: {result.stderr}")
+                    # Decode stderr với error handling
+                    stderr_text = result.stderr.decode('utf-8', errors='replace')
+                    print(f"Error: {stderr_text}")
                 return False
         else:
             print(f"No audio found in {file_path}")
