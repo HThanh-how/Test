@@ -1,15 +1,24 @@
+# Log files
+*.log
+processed_files.log
+
+# Media files
 *.mkv
 *.mp4
-*.mp3
-*.wav
-*.m4a
-*.aac
-*.flac
-*.mkv
-*.mp3
-*.wav
-*.m4a
-*.aac
-*.flac
-*.log
-.venv/
+*.avi
+*.srt
+*.ass
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE files
+.vscode/
+.idea/
+
+# Skip large files (>1MB)
+*.[!g][!i][!t]*
+!*.[!g][!i][!t]*/
+*.[!g][!i][!t]* binary size>1M
