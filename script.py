@@ -336,67 +336,48 @@ def process_video(file_path, output_folder, selected_track, log_file):
         print(f"Exception while processing {file_path}: {e}")
         return False
 
-def extract_subtitle(file_path, subtitle_info):
+def extract_subtitle(file_path, subtitle_info, log_file):
     """Trích xuất subtitle tiếng Việt từ file video."""
     try:
         # Tạo thư mục C:\Subtitles nếu chưa tồn tại
         sub_root_folder = r"C:\Subtitles"
-        sub_log_file = os.path.join(sub_root_folder, "subtitles_processed.log")
         create_folder(sub_root_folder)
         
         index, language, title, codec = subtitle_info
         
         # Chỉ xử lý subtitle tiếng Việt
         if language != 'vie':
-            # print log cho subtitle không phải tiếng Việt
             print(f"Skipping subtitle for {file_path} as it's not Vietnamese.")
             return False
             
-        # Lấy thông tin video để đặt tên
-        resolution_label = get_video_resolution_label(file_path)
-        year = get_movie_year(file_path)
         base_name = os.path.splitext(os.path.basename(file_path))[0]
         
-        # Đặt tên file subtitle với format mới
-        sub_filename = f"{resolution_label}_VIE"
-        if title:
-            sub_filename += f"_{title}"
-        if year:
-            sub_filename += f"_{year}"
-        sub_filename += f"_{base_name}"
-        
-        # Chọn định dạng đầu ra phù hợp
-        output_format = '.srt' if codec in ['subrip', 'srt'] else '.ass'
-        sub_filename = sanitize_filename(sub_filename) + output_format
+        # Đặt tên file subtitle giữ nguyên tên gốc
+        sub_filename = base_name + '.srt'
         output_path = os.path.join(sub_root_folder, sub_filename)
-
-        # Kiểm tra xem subtitle đã được xử lý chưa
-        processed_subs = read_processed_files(sub_log_file)
-        if base_name in processed_subs:
-            return True
 
         # Lệnh ffmpeg để trích xuất subtitle
         cmd = [
             'ffmpeg',
             '-i', file_path,
             '-map', f'0:{index}',
-            '-c', 'copy',
+            '-c:s', 'srt',
             '-y',
             output_path
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
-        
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             print(f"Extracted Vietnamese subtitle to: {output_path}")
-            log_processed_file(sub_log_file, base_name, sub_filename)
+            # Ghi vào log chung
+            log_processed_file(log_file, os.path.basename(file_path), sub_filename)
             return True
         else:
-            print(f"Failed to extract subtitle: {result.stderr}")
+            print("Lỗi khi trích xuất subtitle")
             return False
             
     except Exception as e:
-        print(f"Error extracting subtitle: {e}")
+        print(f"Lỗi khi trích xuất subtitle: {e}")
         return False
 
 def get_subtitle_info(file_path):
@@ -466,10 +447,15 @@ def main():
             has_vie_subtitle = any(track[1] == 'vie' for track in subtitle_tracks)
             has_vie_audio = any(stream.get('tags', {}).get('language', 'und') == 'vie' for stream in audio_streams)
 
+            # Xử lý subtitle tiếng Việt trước
+            if has_vie_subtitle:
+                for sub_track in subtitle_tracks:
+                    if sub_track[1] == 'vie':
+                        extract_subtitle(file_path, sub_track, log_file)
+
             # Nếu không có cả subtitle tiếng Việt và audio tiếng Việt
             if not has_vie_subtitle and not has_vie_audio:
                 print(f"No Vietnamese subtitle and audio found. Renaming file...")
-                # Lấy thông tin audio đầu tiên để rename
                 first_audio = audio_streams[0] if audio_streams else None
                 if first_audio:
                     first_audio_lang = first_audio.get('tags', {}).get('language', 'und')
@@ -478,15 +464,9 @@ def main():
                     log_processed_file(log_file, mkv_file, os.path.basename(new_path))
                 continue
 
-            # Xử lý subtitle trước
-            if subtitle_tracks:
-                for sub_track in subtitle_tracks:
-                    extract_subtitle(file_path, sub_track)
-            else:
-                print(f"No subtitles found in {mkv_file}")
-
-            # Sau đó xử lý video
-            extract_video_with_audio(file_path, vn_folder, original_folder, log_file)
+            # Xử lý video nếu có audio tiếng Việt
+            if has_vie_audio:
+                extract_video_with_audio(file_path, vn_folder, original_folder, log_file)
 
     except Exception as e:
         print(f"Error accessing input folder '{input_folder}': {e}")
