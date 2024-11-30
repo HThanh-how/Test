@@ -12,12 +12,15 @@ def create_folder(folder_name):
 def log_processed_file(log_file, old_name, new_name):
     """Ghi lại log file đã được xử lý với tên cũ và mới."""
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    file_path = os.path.join(".", old_name)
+    signature = get_file_signature(file_path) if os.path.exists(file_path) else ""
     with open(log_file, "a", encoding='utf-8') as f:
-        f.write(f"{old_name}|{new_name}|{current_time}\n")
+        f.write(f"{old_name}|{new_name}|{current_time}|{signature}\n")
 
 def read_processed_files(log_file):
     """Đọc danh sách các file đã xử lý từ log."""
     processed_files = {}
+    processed_signatures = {}
     if os.path.exists(log_file):
         with open(log_file, "r", encoding='utf-8') as f:
             for line in f:
@@ -26,10 +29,14 @@ def read_processed_files(log_file):
                     old_name = parts[0]
                     new_name = parts[1]
                     time_processed = parts[2] if len(parts) > 2 else ""
-                    # Lưu cả tên cũ và tên mới để kiểm tra
-                    processed_files[old_name] = {"new_name": new_name, "time": time_processed}
-                    processed_files[new_name] = {"new_name": new_name, "time": time_processed}
-    return processed_files
+                    signature = parts[3] if len(parts) > 3 else ""
+                    
+                    info = {"new_name": new_name, "time": time_processed, "signature": signature}
+                    processed_files[old_name] = info
+                    processed_files[new_name] = info
+                    if signature:
+                        processed_signatures[signature] = info
+    return processed_files, processed_signatures
 
 def sanitize_filename(name):
     """Loại bỏ các ký tự không hợp lệ trong tên tệp để tránh lỗi FFmpeg."""
@@ -409,21 +416,29 @@ def get_subtitle_info(file_path):
         print(f"Lỗi khi lấy thông tin subtitle từ {file_path}: {e}")
         return []
 
+def get_file_signature(file_path):
+    """Lấy chữ ký của file (size và duration) để nhận diện file trùng."""
+    try:
+        file_size = os.path.getsize(file_path)
+        probe = ffmpeg.probe(file_path)
+        duration = probe.get('format', {}).get('duration', '0')
+        return f"{file_size}_{duration}"
+    except Exception as e:
+        print(f"Error getting file signature: {e}")
+        return None
+
 def main():
     input_folder = "."  # Folder hiện tại
-    vn_folder = "Lồng Tiếng - Thuyết Minh"    # Folder cho file tiếng Việt
-    original_folder = "Original"  # Folder cho file gốc
-    # lấy log file từ C:\Subtitles
+    vn_folder = "Lồng Tiếng - Thuyết Minh"
+    original_folder = "Original"
     log_file = os.path.join(r"C:\Subtitles", "processed_files.log")
 
-    # Tạo các folder output nếu chưa tồn tại
     create_folder(vn_folder)
     create_folder(original_folder)
 
     # Đọc danh sách file đã xử lý
-    processed_files = read_processed_files(log_file)
+    processed_files, processed_signatures = read_processed_files(log_file)
 
-    # Xử lý các file MKV
     try:
         mkv_files = [f for f in os.listdir(input_folder) if f.lower().endswith(".mkv")]
         if not mkv_files:
@@ -434,18 +449,41 @@ def main():
             file_path = os.path.join(input_folder, mkv_file)
             print(f"Processing file: {file_path}")
 
-            # Xử lý subtitle trước
+            # Kiểm tra file đã xử lý bằng tên và signature
+            file_signature = get_file_signature(file_path)
+            if mkv_file in processed_files:
+                print(f"File {mkv_file} was processed as {processed_files[mkv_file]['new_name']} on {processed_files[mkv_file]['time']}. Skipping.")
+                continue
+            elif file_signature and file_signature in processed_signatures:
+                print(f"File {mkv_file} has same content as processed file {processed_signatures[file_signature]['new_name']}. Skipping.")
+                continue
+
+            # Kiểm tra subtitle và audio
             subtitle_tracks = get_subtitle_info(file_path)
+            probe = ffmpeg.probe(file_path)
+            audio_streams = [stream for stream in probe['streams'] if stream['codec_type'] == 'audio']
+            
+            has_vie_subtitle = any(track[1] == 'vie' for track in subtitle_tracks)
+            has_vie_audio = any(stream.get('tags', {}).get('language', 'und') == 'vie' for stream in audio_streams)
+
+            # Nếu không có cả subtitle tiếng Việt và audio tiếng Việt
+            if not has_vie_subtitle and not has_vie_audio:
+                print(f"No Vietnamese subtitle and audio found. Renaming file...")
+                # Lấy thông tin audio đầu tiên để rename
+                first_audio = audio_streams[0] if audio_streams else None
+                if first_audio:
+                    first_audio_lang = first_audio.get('tags', {}).get('language', 'und')
+                    first_audio_info = (-1, -1, first_audio_lang, get_language_abbreviation(first_audio_lang))
+                    new_path = rename_simple(file_path)
+                    log_processed_file(log_file, mkv_file, os.path.basename(new_path))
+                continue
+
+            # Xử lý subtitle trước
             if subtitle_tracks:
                 for sub_track in subtitle_tracks:
                     extract_subtitle(file_path, sub_track)
             else:
                 print(f"No subtitles found in {mkv_file}")
-
-            # Kiểm tra file đã xử lý (kiểm tra cả tên cũ và tên mới)
-            if mkv_file in processed_files:
-                print(f"File {mkv_file} was processed as {processed_files[mkv_file]['new_name']} on {processed_files[mkv_file]['time']}. Skipping audio processing.")
-                continue
 
             # Sau đó xử lý video
             extract_video_with_audio(file_path, vn_folder, original_folder, log_file)
