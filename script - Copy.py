@@ -8,6 +8,9 @@ def create_folder(folder_name):
     """Tạo folder nếu chưa tồn tại."""
     if not os.path.exists(folder_name):
         os.makedirs(folder_name)
+        print(f"Folder '{folder_name}' created.")
+    else:
+        print(f"Folder '{folder_name}' already exists.")
 
 def log_processed_file(log_file, old_name, new_name):
     """Ghi lại log file đã được xử lý với tên cũ và mới."""
@@ -253,76 +256,69 @@ def rename_file(file_path, audio_info, is_output=False):
 def process_video(file_path, output_folder, selected_track, log_file):
     """Xử lý video với track audio đã chọn và trích xuất subtitle."""
     try:
-        original_filename = os.path.basename(file_path)
+        # Trích xuất tất cả subtitle
+        subtitle_tracks = get_subtitle_info(file_path)
+        for sub_track in subtitle_tracks:
+            extract_subtitle(file_path, sub_track)
         
-        # Lấy thông tin cơ bản
+        original_filename = os.path.basename(file_path)
+        # Đặt tên file đầu ra theo format mới
         resolution_label = get_video_resolution_label(file_path)
         year = get_movie_year(file_path)
+        audio_title = selected_track[3]
+        
         base_name = os.path.splitext(os.path.basename(file_path))[0]
-        
-        # Lấy thông tin audio đầu tiên
-        probe = ffmpeg.probe(file_path)
-        first_audio = next((stream for stream in probe['streams'] 
-                          if stream['codec_type'] == 'audio'), None)
-        
-        if first_audio:
-            first_audio_lang = first_audio.get('tags', {}).get('language', 'und')
-            first_audio_title = first_audio.get('tags', {}).get('title', 
-                               get_language_abbreviation(first_audio_lang))
-            
-            # Format tên file dựa vào điều kiện
-            if first_audio_lang == 'vie':
-                # Trường hợp audio đầu tiên là tiếng Việt
-                source_name = f"{resolution_label}_{get_language_abbreviation(first_audio_lang)}_{first_audio_title}"
-                output_name = f"{resolution_label}_{get_language_abbreviation(selected_track[2])}"
-            else:
-                # Trường hợp audio đầu tiên không phải tiếng Việt
-                source_name = f"{resolution_label}_{get_language_abbreviation(first_audio_lang)}"
-                output_name = f"{resolution_label}_{get_language_abbreviation(selected_track[2])}_{selected_track[3]}"
-            
-            # Thêm năm và tên gốc
-            if year:
-                source_name += f"_{year}"
-                output_name += f"_{year}"
-            source_name += f"_{base_name}.mkv"
-            output_name += f"_{base_name}.mkv"
-            
-            # Tạo đường dẫn output
-            output_path = os.path.join(output_folder, sanitize_filename(output_name))
+        output_file_name = f"{resolution_label}_{audio_title}"
+        if year:
+            output_file_name += f"_{year}"
+        output_file_name += f"_{base_name}.mkv"
+        output_file_name = sanitize_filename(output_file_name)
+        output_path = os.path.join(output_folder, output_file_name)
 
-            # Xử lý tách audio
-            cmd = [
-                'ffmpeg',
-                '-i', file_path,
-                '-map', '0:v',
-                '-map', f'0:{selected_track[0]}',
-                '-c', 'copy',
-                '-y',
-                output_path
-            ]
+        # Sử dụng subprocess để chạy lệnh ffmpeg
+        cmd = [
+            'ffmpeg',
+            '-i', file_path,
+            '-map', '0:v',
+            '-map', f'0:{selected_track[0]}',
+            '-c', 'copy',
+            '-y',
+            output_path
+        ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
 
-            if result.returncode == 0 and os.path.exists(output_path):
-                print(f"Video saved to {output_path}.")
+        if result.returncode == 0 and os.path.exists(output_path):
+            print(f"Video saved to {output_path}.")
+            
+            # Đổi tên file gốc và file output
+            probe = ffmpeg.probe(file_path)
+            first_audio = next((stream for stream in probe['streams'] 
+                              if stream['codec_type'] == 'audio'), None)
+            if first_audio:
+                first_audio_lang = first_audio.get('tags', {}).get('language', 'und')
+                first_audio_title = first_audio.get('tags', {}).get('title', 
+                                   get_language_abbreviation(first_audio_lang))
+                first_audio_info = (-1, -1, first_audio_lang, first_audio_title)
                 
-                # Rename file gốc sau khi xử lý thành công
-                new_source_path = os.path.join(os.path.dirname(file_path), sanitize_filename(source_name))
-                os.rename(file_path, new_source_path)
-                print(f"Renamed source file to: {source_name}")
+                # Đổi tên file gốc
+                new_source_path = rename_file(file_path, first_audio_info)
+                new_source_name = os.path.basename(new_source_path)
                 
-                # Ghi log
-                log_processed_file(log_file, original_filename, os.path.basename(new_source_path))
-                return True
-            else:
-                print(f"Failed to process {file_path}.")
-                if result.stderr:
-                    print(f"Error: {result.stderr}")
-                return False
+                # Đổi tên file output
+                output_original_name = os.path.basename(output_path)
+                new_output_path = rename_file(output_path, selected_track, True)
+                new_output_name = os.path.basename(new_output_path)
+                
+                # Ghi log với cả tên cũ và mới
+                log_processed_file(log_file, original_filename, new_source_name)
+                log_processed_file(log_file, output_original_name, new_output_name)
+            return True
         else:
-            print(f"No audio found in {file_path}")
+            print(f"Failed to process {file_path}.")
+            if result.stderr:
+                print(f"Error: {result.stderr}")
             return False
-            
     except Exception as e:
         print(f"Exception while processing {file_path}: {e}")
         return False
@@ -364,6 +360,7 @@ def extract_subtitle(file_path, subtitle_info):
         # Kiểm tra xem subtitle đã được xử lý chưa
         processed_subs = read_processed_files(sub_log_file)
         if base_name in processed_subs:
+            print(f"Subtitle for {base_name} was already extracted. Skipping.")
             return True
 
         # Lệnh ffmpeg để trích xuất subtitle
@@ -431,7 +428,7 @@ def main():
             file_path = os.path.join(input_folder, mkv_file)
             print(f"Processing file: {file_path}")
 
-            # Xử lý subtitle trước
+            # Extract subtitle cho tất cả file, kể cả file đã xử lý audio
             subtitle_tracks = get_subtitle_info(file_path)
             if subtitle_tracks:
                 for sub_track in subtitle_tracks:
@@ -439,12 +436,11 @@ def main():
             else:
                 print(f"No subtitles found in {mkv_file}")
 
-            # Kiểm tra file đã xử lý
+            # Kiểm tra và xử lý audio chỉ cho file chưa xử lý
             if mkv_file in processed_files:
                 print(f"File {mkv_file} was processed as {processed_files[mkv_file]['new_name']} on {processed_files[mkv_file]['time']}. Skipping audio processing.")
                 continue
 
-            # Sau đó xử lý video
             extract_video_with_audio(file_path, vn_folder, original_folder, log_file)
 
     except Exception as e:
