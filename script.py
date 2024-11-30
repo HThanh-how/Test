@@ -439,21 +439,34 @@ def main():
                 print(f"File {mkv_file} has same content as processed file {processed_signatures[file_signature]['new_name']}. Skipping.")
                 continue
 
-            # Kiểm tra subtitle và audio
-            subtitle_tracks = get_subtitle_info(file_path)
-            probe = ffmpeg.probe(file_path)
-            audio_streams = [stream for stream in probe['streams'] if stream['codec_type'] == 'audio']
-            
-            has_vie_subtitle = any(track[1] == 'vie' for track in subtitle_tracks)
-            has_vie_audio = any(stream.get('tags', {}).get('language', 'und') == 'vie' for stream in audio_streams)
+            # Đọc thông tin file một lần duy nhất
+            try:
+                probe = ffmpeg.probe(file_path)
+                audio_streams = [stream for stream in probe['streams'] if stream['codec_type'] == 'audio']
+                subtitle_streams = [stream for stream in probe['streams'] if stream['codec_type'] == 'subtitle']
+            except Exception as e:
+                print(f"Error probing file {file_path}: {e}")
+                continue
 
-            # Xử lý subtitle tiếng Việt trước
+            # Kiểm tra subtitle và audio tiếng Việt
+            has_vie_subtitle = any(stream.get('tags', {}).get('language', 'und') == 'vie' 
+                                 for stream in subtitle_streams)
+            has_vie_audio = any(stream.get('tags', {}).get('language', 'und') == 'vie' 
+                               for stream in audio_streams)
+
+            # Xử lý subtitle tiếng Việt
             if has_vie_subtitle:
-                for sub_track in subtitle_tracks:
-                    if sub_track[1] == 'vie':
-                        extract_subtitle(file_path, sub_track, log_file)
+                for stream in subtitle_streams:
+                    if stream.get('tags', {}).get('language', 'und') == 'vie':
+                        subtitle_info = (
+                            stream['index'],
+                            'vie',
+                            stream.get('tags', {}).get('title', ''),
+                            stream.get('codec_name', '')
+                        )
+                        extract_subtitle(file_path, subtitle_info, log_file)
 
-            # Nếu không có cả subtitle tiếng Việt và audio tiếng Việt
+            # Nếu không có cả subtitle và audio tiếng Việt
             if not has_vie_subtitle and not has_vie_audio:
                 print(f"No Vietnamese subtitle and audio found. Renaming file...")
                 first_audio = audio_streams[0] if audio_streams else None
@@ -466,7 +479,16 @@ def main():
 
             # Xử lý video nếu có audio tiếng Việt
             if has_vie_audio:
-                extract_video_with_audio(file_path, vn_folder, original_folder, log_file)
+                # Tìm audio track tiếng Việt có nhiều kênh nhất
+                vie_audio_tracks = [(i, stream.get('channels', 0), 'vie', 
+                                   stream.get('tags', {}).get('title', 'VIE'))
+                                  for i, stream in enumerate(audio_streams)
+                                  if stream.get('tags', {}).get('language', 'und') == 'vie']
+                if vie_audio_tracks:
+                    # Sắp xếp theo số kênh giảm dần
+                    vie_audio_tracks.sort(key=lambda x: x[1], reverse=True)
+                    selected_track = vie_audio_tracks[0]
+                    extract_video_with_audio(file_path, vn_folder, original_folder, log_file)
 
     except Exception as e:
         print(f"Error accessing input folder '{input_folder}': {e}")
